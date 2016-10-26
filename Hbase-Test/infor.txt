@@ -1,0 +1,2 @@
+writeCount:20000000
+put the  row to table :512ms

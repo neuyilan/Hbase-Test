@@ -1,0 +1,247 @@
+package org.apache.hadoop.hbase.index.test;
+
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileNotFoundException;
+import java.io.FileReader;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.util.ArrayList;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hbase.HBaseConfiguration;
+import org.apache.hadoop.hbase.HColumnDescriptor;
+import org.apache.hadoop.hbase.HTableDescriptor;
+import org.apache.hadoop.hbase.client.Durability;
+import org.apache.hadoop.hbase.client.HBaseAdmin;
+import org.apache.hadoop.hbase.client.HTable;
+import org.apache.hadoop.hbase.client.Put;
+import org.apache.hadoop.hbase.index.client.DataType;
+import org.apache.hadoop.hbase.index.client.IndexColumnDescriptor;
+import org.apache.hadoop.hbase.index.client.IndexDescriptor;
+import org.apache.hadoop.hbase.util.Bytes;
+
+public class PutLatencyTestUseIndex {
+  static String filePath = "/opt/tpch-test-data/large/xab";
+  static boolean wal = false;
+  static int index = 1;
+  static int writeNum = 50;
+
+  ArrayList<Put> queue = new ArrayList<Put>();
+  String tableName = "orders_withindex";
+  Configuration conf = HBaseConfiguration.create();
+  
+  Writer writer = null;
+  long startTime = 0;
+  long writeCount = 0;
+
+  public PutLatencyTestUseIndex() throws IOException {
+    Configuration conf = HBaseConfiguration.create();
+//    conf.set("hbase.zookeeper.quorum", "lingcloud31,lingcloud29,data9");  
+//    conf.set("hbase.zookeeper.property.clientPort", "2181");  
+    HBaseAdmin admin = new HBaseAdmin(conf);
+
+    if (admin.tableExists(tableName)) {
+      admin.disableTable(tableName);
+      admin.deleteTable(tableName);
+      // return;
+    }
+
+    HTableDescriptor tableDesc = new HTableDescriptor(tableName);
+
+    if (index == 1) {
+      IndexDescriptor index1 = new IndexDescriptor(Bytes.toBytes("c3"), DataType.DOUBLE);
+      IndexDescriptor index2 = new IndexDescriptor(Bytes.toBytes("c4"), DataType.STRING);
+      IndexDescriptor index3 = new IndexDescriptor(Bytes.toBytes("c5"), DataType.STRING);
+
+      IndexColumnDescriptor family = new IndexColumnDescriptor("f");
+     
+      family.addIndex(index1);
+      family.addIndex(index2);
+      family.addIndex(index3);
+      family.setMaxVersions(10);
+      family.setMinVersions(3);
+      
+      tableDesc.addFamily(family);
+      admin.createTable(tableDesc, Bytes.toBytes("1"), Bytes.toBytes("9"), 10);
+    } else {
+      HColumnDescriptor family = new HColumnDescriptor("f");
+      tableDesc.addFamily(family);
+      admin.createTable(tableDesc, Bytes.toBytes("1"), Bytes.toBytes("9"), 10);
+    }
+    admin.close();
+  }
+
+  public void start() throws IOException {
+    writer = new Writer();
+    writer.setName("Writer");
+    writer.start();
+  }
+
+  public void stop() {
+    try {
+      writer.join();
+    } catch (InterruptedException e) {
+      e.printStackTrace();
+    }
+  }
+
+//  public void report() throws IOException {
+//    if (writeCount == 0) return;
+//    /**
+//     * write the info to file
+//     */
+//    File file=new File("infor.txt");
+//    FileWriter out=null;
+//    out=new FileWriter(file,true);
+//    out.write("time=" + ((System.nanoTime() - startTime) / 1000) + "ms,writeCount=" + writeCount
+//            + ", latency=" + ((System.nanoTime() - startTime) / writeCount / 1000)+"ms");
+//    out.write("\n");
+//    out.close();
+//    
+//    System.out.println("time=" + ((System.nanoTime() - startTime) / 1000) + ",writeCount=" + writeCount
+//        + ", latency=" + ((System.nanoTime() - startTime) / writeCount / 1000));
+//  }
+
+  class Writer extends Thread {
+
+    private byte[] reverse(byte[] b) {
+      for (int i = 0, j = b.length - 1; i < j; i++, j--) {
+        byte tmp = b[i];
+        b[i] = b[j];
+        b[j] = tmp;
+      }
+      return b;
+    }
+
+    public void loadData() {
+      try {
+        BufferedReader reader = new BufferedReader(new FileReader(new File(filePath)));
+        String line = null, col[] = null;
+
+        // key ORDERKEY Int
+        // c1 CUSTKEY Int
+        // c2 ORDERSTATUS String
+        // c3 TOTALPRICE Double index
+        // c4 ORDERDATE String index
+        // c5 ORDERPRIORITY String index
+        // c6 CLERK String
+        // c7 SHIPPRIORITY Int
+        // c8 COMMENT String
+        
+        
+//        conf.set("hbase.zookeeper.quorum", "lingcloud31,lingcloud29,data9");  
+//        conf.set("hbase.zookeeper.property.clientPort", "2181");  
+        HTable table = new HTable(conf, tableName);
+        
+        while ((line = reader.readLine()) != null) {
+          col = line.split("\\|");
+          Put put = new Put(reverse(Bytes.toBytes(col[0])));
+          put.add(Bytes.toBytes("f"), Bytes.toBytes("c1"), Bytes.toBytes(Integer.valueOf(col[1]))); // int
+          put.add(Bytes.toBytes("f"), Bytes.toBytes("c2"), Bytes.toBytes(col[2])); // string
+          put.add(Bytes.toBytes("f"), Bytes.toBytes("c3"), Bytes.toBytes(Double.valueOf(col[3]))); // double
+          put.add(Bytes.toBytes("f"), Bytes.toBytes("c4"), Bytes.toBytes(col[4])); // string
+          put.add(Bytes.toBytes("f"), Bytes.toBytes("c5"), Bytes.toBytes(col[5])); // string
+          put.add(Bytes.toBytes("f"), Bytes.toBytes("c6"), Bytes.toBytes(col[6])); // string
+          put.add(Bytes.toBytes("f"), Bytes.toBytes("c7"), Bytes.toBytes(Integer.valueOf(col[7]))); // int
+          put.add(Bytes.toBytes("f"), Bytes.toBytes("c8"), Bytes.toBytes(col[8])); // string
+          if (!wal) {
+            put.setDurability(Durability.SKIP_WAL);
+          }
+          
+          writeCount++;
+          table.put(put);
+          
+          
+          queue.add(put);
+          if (queue.size() > writeNum) {
+            break;
+          }
+        }
+        table.close();
+        reader.close();
+        
+//        /**
+//         * write the info to file
+//         */
+//        File file=new File("infor.txt");
+//        FileWriter out=null;
+//        out=new FileWriter(file,true);
+//        out.write("writeCount:" + writeCount);
+//        out.write("\n");
+//        out.close();
+        
+        
+        System.out.println("writeCount:" + writeCount);
+      } catch (FileNotFoundException e) {
+        e.printStackTrace();
+      } catch (IOException e) {
+        e.printStackTrace();
+      }
+    }
+
+    public void run() {
+    	startTime = System.nanoTime();
+      loadData();
+      try {
+        long stopTime = 0;
+//        conf.set("hbase.zookeeper.quorum", "lingcloud31,lingcloud29,data9");  
+//        conf.set("hbase.zookeeper.property.clientPort", "2181");  
+//        HTable table = new HTable(conf, tableName);
+//        startTime = System.nanoTime();
+//        for (Put put : queue) {
+//          table.put(put);
+//          writeCount++;
+//        }
+        stopTime = System.nanoTime();
+//        table.close();
+
+        /**
+         * write the info to file
+         */
+//        File file=new File("infor.txt");
+//        FileWriter out=null;
+//        out=new FileWriter(file,true);
+//        out.write("put the  row to table :"+(stopTime - startTime) / writeCount / 1000+"ms");
+//        out.write("\n");
+//        out.close();
+        
+        System.out.println("put the  row to table :"+(stopTime - startTime) / writeCount / 1000);
+
+      } catch (Exception e) {
+        e.printStackTrace();
+      }
+    }
+  }
+
+  public static void main(String[] args) throws IOException {
+    try {
+      filePath = args[0];
+//      writeNum = Integer.valueOf(args[1]);
+      wal = Boolean.valueOf(args[2]);
+      index = Integer.valueOf(args[3]);
+    } catch (Exception e) {
+      System.out.println("filePath  writeNum  wal index");
+      // return;
+    }
+
+    System.out.println("----------------" + filePath);
+//    System.out.println("----------------" + writeNum);
+    System.out.println("----------------" + wal);
+    System.out.println("----------------" + index);
+
+    PutLatencyTestUseIndex test = new PutLatencyTestUseIndex();
+    test.start();
+//    while (test.writer.isAlive()) {
+////      try {
+////        Thread.sleep(5000);
+////      } catch (InterruptedException e) {
+////        e.printStackTrace();
+////      }
+////      test.report();
+//    }
+//
+//    test.report();
+  }
+
+}
