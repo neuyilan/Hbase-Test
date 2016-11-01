@@ -25,7 +25,7 @@ public class PutLatencyTestUseIndex {
   static String filePath = "/opt/tpch-test-data/large/xab";
   static boolean wal = false;
   static int index = 1;
-  static int writeNum = 50;
+  static int writeNum = 20000000;
 
   ArrayList<Put> queue = new ArrayList<Put>();
   String tableName = "orders_withindex";

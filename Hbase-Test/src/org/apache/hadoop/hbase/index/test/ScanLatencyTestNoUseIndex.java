@@ -19,14 +19,14 @@ import org.apache.hadoop.hbase.filter.SingleColumnValueFilter;
 import org.apache.hadoop.hbase.util.Bytes;
 import org.apache.hadoop.hbase.util.Writables;
 
-public class ScanLatencyTestUseIndex {
+public class ScanLatencyTestNoUseIndex {
   public static void main(String[] args) throws IOException {
 	Configuration conf = HBaseConfiguration.create();
     HTable table = new HTable(conf, "orders_withindex");
 
     double c3_end = 90000.0;
     String c5_equal = "2-HIGH";
-    boolean useIndex = true;
+    boolean useIndex = false;
     boolean print = true;
     int caching = 1000;
     int runTimes=1;
